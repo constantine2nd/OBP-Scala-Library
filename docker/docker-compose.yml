@@ -1,0 +1,29 @@
+version: "3.9"
+
+services:
+  # Nexus repository
+  nexus:
+    image: sonatype/nexus3:latest
+    container_name: nexus
+    ports:
+      - "8081:8081"
+    volumes:
+      - nexus-data:/nexus-data
+    environment:
+      - INSTALL4J_ADD_VM_PARAMS=-Xms1200m -Xmx1200m
+
+  # SBT container for building/publishing library
+  sbt:
+    build:
+      context: ./sbt
+      dockerfile: Dockerfile
+    container_name: sbt
+    working_dir: /workspace
+    volumes:
+      - ../:/workspace
+    depends_on:
+      - nexus
+    tty: true
+
+volumes:
+  nexus-data:
