@@ -5,6 +5,11 @@
 
 set -e  # Exit on any error
 
+# Get script directory and change to project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_ROOT"
+
 # Configuration
 SCRIPT_VERSION="2.0.0"
 SCRIPT_NAME="OBP Scala Library Multi-Version Publisher"
@@ -236,14 +241,19 @@ validate_project_structure() {
 validate_environment() {
     log_step "Validating environment variables..."
 
+    # Get script directory and project root
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local project_root="$(dirname "$script_dir")"
+    local env_file="$project_root/.env"
+
     # Check if .env file exists
-    if [ ! -f ".env" ]; then
-        log_error ".env file not found. Please run ./scripts/setup-credentials.sh first."
+    if [ ! -f "$env_file" ]; then
+        log_error ".env file not found at $env_file. Please run ./scripts/setup-credentials.sh first."
         return 1
     fi
 
     # Load environment variables
-    source .env
+    source "$env_file"
 
     # Verify required environment variables
     local missing_vars=()
@@ -269,12 +279,12 @@ validate_environment() {
 
 # Function to get Scala versions from build.sbt
 get_scala_versions() {
-    log_step "Extracting Scala versions from build.sbt..."
+    log_step "Extracting Scala versions from build.sbt..." >&2
 
     # Extract crossScalaVersions from build.sbt
     local versions_line=$(grep "crossScalaVersions" build.sbt | head -1)
     if [ -z "$versions_line" ]; then
-        log_error "crossScalaVersions not found in build.sbt"
+        log_error "crossScalaVersions not found in build.sbt" >&2
         return 1
     fi
 
@@ -282,7 +292,7 @@ get_scala_versions() {
     local versions=$(echo "$versions_line" | sed 's/.*Seq(//' | sed 's/).*//' | tr -d '"' | tr ',' '\n' | awk '{print $1}' | grep -v '^$')
 
     if [ -z "$versions" ]; then
-        log_error "Could not parse Scala versions from build.sbt"
+        log_error "Could not parse Scala versions from build.sbt" >&2
         return 1
     fi
 
@@ -305,16 +315,19 @@ ensure_nexus_running() {
 
             # Wait for Nexus to be ready
             log_info "Waiting for Nexus to be ready..."
-            local max_wait=60
+            local max_wait=120
             local wait_time=0
+            local nexus_url="${NEXUS_URL:-http://localhost:8081/}"
 
             while [ $wait_time -lt $max_wait ]; do
-                if curl -s -f "http://localhost:8081" >/dev/null 2>&1; then
+                # Test both localhost and container hostname
+                if curl -s -f "${nexus_url}service/rest/v1/status" >/dev/null 2>&1 || \
+                   curl -s -f "http://localhost:8081/service/rest/v1/status" >/dev/null 2>&1; then
                     log_success "Nexus is ready to accept connections"
                     break
                 fi
-                sleep 2
-                wait_time=$((wait_time + 2))
+                sleep 5
+                wait_time=$((wait_time + 5))
                 show_progress $wait_time $max_wait "nexus" "Starting up..."
             done
 
@@ -496,7 +509,11 @@ if [ "$SKIP_VALIDATION" = "false" ]; then
     test_sbt_container || exit 1
 else
     log_warning "Skipping validation checks (--skip-validation specified)"
-    source .env  # Still need to load environment variables
+    # Still need to load environment variables
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local project_root="$(dirname "$script_dir")"
+    local env_file="$project_root/.env"
+    source "$env_file"
 fi
 
 # Get Scala versions
@@ -567,7 +584,7 @@ if [ $FAILED_VERSIONS -eq 0 ]; then
         echo
         echo "📦 Published artifacts can be found at:"
         echo "   Repository: $NEXUS_URL"
-        echo "   Path: repository/maven-snapshots/org/openbankproject/"
+        echo "   Browse: ${NEXUS_URL}repository/maven-snapshots/org/openbankproject/"
         echo
         echo "📋 Artifact details:"
         for version in "${SCALA_VERSIONS[@]}"; do
